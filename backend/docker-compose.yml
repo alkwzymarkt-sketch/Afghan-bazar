@@ -1,0 +1,46 @@
+version: '3.8'
+
+services:
+  # 1. PostgreSQL Persistent Cloud Database (Zero Data Loss)
+  postgres:
+    image: postgres:15-alpine
+    container_name: afghan_bazar_postgres
+    restart: always
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-afghan_bazar_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-KabulBazarSecure2026!}
+      POSTGRES_DB: ${POSTGRES_DB:-afghan_bazar_db}
+    ports:
+      - "5432:5432"
+    volumes:
+      - afghan_bazar_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U afghan_bazar_user -d afghan_bazar_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # 2. Afghan Bazar Backend REST API Service
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: afghan_bazar_api
+    restart: always
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 5000
+      DATABASE_URL: postgresql://afghan_bazar_user:KabulBazarSecure2026!@postgres:5432/afghan_bazar_db?schema=public
+      JWT_SECRET: ${JWT_SECRET:-afghan_bazar_super_secure_jwt_secret_34_provinces}
+      CLOUDINARY_CLOUD_NAME: ${CLOUDINARY_CLOUD_NAME:-afghanbazar}
+      CLOUDINARY_API_KEY: ${CLOUDINARY_API_KEY:-1234567890}
+      CLOUDINARY_API_SECRET: ${CLOUDINARY_API_SECRET:-secret}
+    ports:
+      - "5000:5000"
+
+volumes:
+  afghan_bazar_pgdata:
+    driver: local

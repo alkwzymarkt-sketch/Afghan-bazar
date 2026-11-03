@@ -1,0 +1,221 @@
+// =========================================================================
+// AFGHAN BAZAR (افغان بازار) - PRISMA SCHEMA & POSTGRESQL ENGINE
+// Full Production Schema for 34 Afghan Provinces & 3-Tier Subscriptions
+// =========================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  CUSTOMER
+  VENDOR
+  SUPERADMIN
+}
+
+enum SubscriptionTier {
+  VIP       // Priority: 100
+  SPECIAL   // Priority: 50
+  NORMAL    // Priority: 10
+}
+
+enum SubscriptionStatus {
+  PENDING_PAYMENT
+  ACTIVE
+  EXPIRED
+  CANCELLED
+}
+
+enum OrderStatus {
+  PENDING
+  ACCEPTED
+  SHIPPED
+  DELIVERED
+  CANCELLED
+}
+
+enum PaymentMethod {
+  COD             // Cash on Delivery (کابل اکسپرس)
+  BANK_TRANSFER   // Direct deposit to official Super Admin Bank account
+}
+
+model Province {
+  id        Int       @id @default(autoincrement())
+  nameFa    String    @unique
+  namePs    String
+  nameEn    String
+  users     User[]
+  vendors   Vendor[]
+  orders    Order[]
+}
+
+model User {
+  id             String         @id @default(uuid())
+  phone          String         @unique
+  fullName       String
+  role           UserRole       @default(CUSTOMER)
+  provinceId     Int
+  province       Province       @relation(fields: [provinceId], references: [id])
+  isVerified     Boolean        @default(false)
+  isBanned       Boolean        @default(false)
+  avatarUrl      String?
+  vendor         Vendor?
+  orders         Order[]
+  auditLogs      AuditLog[]
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  @@index([phone])
+  @@index([provinceId])
+}
+
+model SubscriptionPlan {
+  id            Int                  @id @default(autoincrement())
+  tier          SubscriptionTier     @unique
+  titleFa       String               // VIP, ویژه, عادی
+  priority      Int                  // 100, 50, 10 for ranking algorithm
+  monthlyFeeAfn BigInt               // Price in AFN
+  featuresFa    String[]
+  subscriptions VendorSubscription[]
+}
+
+model Vendor {
+  id                     String               @id @default(uuid())
+  userId                 String               @unique
+  user                   User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  shopName               String
+  description            String?
+  logoUrl                String?
+  bannerUrl              String?
+  address                String
+  provinceId             Int
+  province               Province             @relation(fields: [provinceId], references: [id])
+  isVerified             Boolean              @default(false)
+  isActive               Boolean              @default(true)
+  
+  // 3-Tier Active Subscription ranking cache
+  currentTier            SubscriptionTier     @default(NORMAL)
+  rankingPriority        Int                  @default(10)
+  subscriptionExpiresAt  DateTime?
+
+  products               Product[]
+  orders                 Order[]
+  subscriptions          VendorSubscription[]
+  createdAt              DateTime             @default(now())
+  updatedAt              DateTime             @updatedAt
+
+  @@index([provinceId])
+  @@index([currentTier, rankingPriority])
+}
+
+model VendorSubscription {
+  id                   String             @id @default(uuid())
+  vendorId             String
+  vendor               Vendor             @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  planId               Int
+  plan                 SubscriptionPlan   @relation(fields: [planId], references: [id])
+  status               SubscriptionStatus @default(PENDING_PAYMENT)
+  startsAt             DateTime
+  expiresAt            DateTime
+  paidAmountAfn        BigInt
+  bankSlipUrl          String?            // Cloud uploaded bank receipt image
+  depositReference     String?            // Bank transaction number
+  approvedByAdminId    String?
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+
+  @@index([vendorId, status])
+}
+
+model Category {
+  id        Int       @id @default(autoincrement())
+  nameFa    String    @unique
+  namePs    String
+  nameEn    String
+  iconName  String?
+  products  Product[]
+}
+
+model Product {
+  id               String      @id @default(uuid())
+  vendorId         String
+  vendor           Vendor      @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  categoryId       Int
+  category         Category    @relation(fields: [categoryId], references: [id])
+  name             String
+  description      String
+  stock            Int         @default(1)
+  normalPriceAfn   BigInt
+  discountPriceAfn BigInt?
+  imageUrls        String[]    // Real S3 / Cloudinary URLs
+  isActive         Boolean     @default(true)
+  orderItems       OrderItem[]
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+
+  @@index([vendorId])
+  @@index([categoryId])
+  @@index([createdAt])
+}
+
+model Order {
+  id                 String        @id @default(uuid())
+  orderNumber        String        @unique
+  buyerId            String
+  buyer              User          @relation(fields: [buyerId], references: [id])
+  vendorId           String
+  vendor             Vendor        @relation(fields: [vendorId], references: [id])
+  provinceId         Int
+  province           Province      @relation(fields: [provinceId], references: [id])
+  deliveryAddress    String
+  contactPhone       String
+  paymentMethod      PaymentMethod @default(COD)
+  totalAmountAfn     BigInt
+  status             OrderStatus   @default(PENDING)
+  bankSlipUrl        String?       // In case of Bank Transfer payment
+  items              OrderItem[]
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+
+  @@index([buyerId])
+  @@index([vendorId, status])
+}
+
+model OrderItem {
+  id         String   @id @default(uuid())
+  orderId    String
+  order      Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId  String
+  product    Product  @relation(fields: [productId], references: [id])
+  quantity   Int
+  unitPrice  BigInt
+}
+
+model PlatformSettings {
+  id                   Int      @id @default(1)
+  platformName         String   @default("Afghan Bazar (افغان بازار)")
+  supportPhone         String   @default("+93 700 888 999")
+  
+  // Real-time Dynamic Official Bank Account (Super Admin Managed)
+  bankName             String   @default("کابل بانک نو / Da Afghanistan Bank")
+  accountTitle         String   @default("حساب رسمی افغان بازار (Afghan Bazar Central)")
+  accountNumber        String   @default("0101-2030-4050-6070")
+  iban                 String   @default("AF02KBLB00000101203040506070")
+  bankInstructionsFa   String   @default("لطفاً پس از واریز به کابل بانک نو یا عزیزی بانک، عکس رسید واریز را در فرم ثبت‌نام غرفه آپلود نمایید.")
+  
+  updatedAt            DateTime @updatedAt
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  adminId   String
+  admin     User     @relation(fields: [adminId], references: [id])
+  action    String
+  details   Json
+  createdAt DateTime @default(now())
+}
